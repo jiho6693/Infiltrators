@@ -2,14 +2,12 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Tierra-inspired — Intruder Cells (BW Pixel Only)</title>
 <style>
-  
   :root{ --bg:#0b0e12; --ink:#e6f0ff; --rule:#1a2433; }
   html,body{height:100%}
-  body{ overflow:hidden;   /* ✅ 스크롤 막기 */
-    touch-action:none; /* ✅ 모바일에서 스크롤/줌 방지 */margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 system-ui,-apple-system,"Noto Sans KR",Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 system-ui,-apple-system,"Noto Sans KR",Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
   #wrap{display:grid; grid-template-rows:auto 1fr; height:100vh}
   body.hide-ui header{display:none;}               /* 기본 UI 숨김 */
   header{display:flex;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--rule);flex-wrap:wrap}
@@ -19,9 +17,9 @@
   .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   label{font-size:12px;opacity:.85}
   input[type=range]{accent-color:#7cc7ff}
-  #canvas{display:block;width:100%;height:100%;background:#000;cursor:crosshair;}
-  .hint{position:fixed;right:12px;bottom:10px;font-size:12px;opacity:.6}
-  
+  #canvas{display:block;width:100%;height:100%;background:#000} /* BW 배경 */
+  .legend{font-size:12px;opacity:.7;margin-left:auto}
+  .hint {position:fixed;right:12px;bottom:10px;font-size:12px;opacity:.6}
 </style>
 </head>
 <body>
@@ -46,10 +44,11 @@
     </div>
     <button class="btn" id="resetBtn">Reset</button>
     <button class="btn" id="intrudeBtn">군집투입</button>
+    <!-- <div class="legend">U: UI 토글 · 캔버스 클릭: 군집 생성</div> -->
   </header>
   <canvas id="canvas"></canvas>
 </div>
-<div class="hint">클릭 : 침입 </div>
+<div class="hint">U = UI 표시/숨김</div>
 
 <script>
 (function(){
@@ -58,9 +57,6 @@
 
   const cvs = document.getElementById('canvas');
   const ctx = cvs.getContext('2d', { alpha:false });
-
-  // --- Effects state (click ripple only) ---
-  let ripples = []; // {x,y,r,alpha,dr}
 
   // --- SIM params ---
   let tile = 1;
@@ -84,7 +80,7 @@
   // --- Grid & agents ---
   let cols=0, rows=0, grid, agents=[];
   const N = () => cols*rows;
-  const idx = (x,y)=> (((y%rows)+rows)%rows)*cols + (((x%cols)+cols)%cols);
+  const idx = (x,y)=> ( ( (y%rows)+rows)%rows )*cols + ( ( (x%cols)+cols)%cols ); // wrap
 
   // RNG
   let seed = (Math.random()*1e9)|0;
@@ -101,15 +97,15 @@
 
   function ambient(x,y){
     const n = Math.sin((x*12.9898 + y*78.233)*0.017) * 43758.5453;
-    return Math.max(0, (n - Math.floor(n)) - 0.25);
+    return Math.max(0, (n - Math.floor(n)) - 0.25); // 0..~0.75
   }
 
   const OPS = 11;
   function newGenome(len=20){
     const g = new Uint8Array(len);
     for(let i=0;i<len;i++) g[i] = rint(OPS);
-    g[rint(len)] = 5;
-    g[rint(len)] = 8;
+    g[rint(len)] = 5; // REPL bias
+    g[rint(len)] = 8; // EAT bias
     return g;
   }
   function colorFromGenome(gen){ let h=0; for(let i=0;i<gen.length;i++) h = (h*131 + gen[i])>>>0; return h%360; }
@@ -118,7 +114,7 @@
     const maxAgents = Math.floor(N()*MAX_DENSITY);
     if(agents.length >= maxAgents) return -1;
     const idAt = grid[idx(x,y)]; if(idAt!==-1) return -1;
-    const a = { x,y, dir:rint(4), ip:0, gen:gen||newGenome(), energy:30 + rint(40), age:0, hue:0 };
+    const a = { x,y, dir:rint(4), ip:0, gen:gen||newGenome(), energy: 30 + rint(40), age:0, hue:0 };
     a.hue = colorFromGenome(a.gen);
     const id = agents.length; agents.push(a); grid[idx(x,y)] = id; return id;
   }
@@ -126,12 +122,7 @@
   function ahead(a){ const d=a.dir; return d===0?[0,-1]: d===1?[1,0]: d===2?[0,1]:[-1,0]; }
   function tryMove(a,dx,dy){
     const to=idx(a.x+dx,a.y+dy);
-    if(grid[to]===-1){
-      grid[idx(a.x,a.y)] = -1;
-      a.x+=dx; a.y+=dy;
-      grid[idx(a.x,a.y)] = agents.indexOf(a);
-      return true;
-    }
+    if(grid[to]===-1){ grid[idx(a.x,a.y)] = -1; a.x+=dx; a.y+=dy; grid[idx(a.x,a.y)] = agents.indexOf(a); return true; }
     return false;
   }
 
@@ -143,7 +134,7 @@
     a.age++; a.energy -= BASE_DRAIN;
 
     // crowding death
-    const nx=[-1,0,1,-1,1,-1,0,1], ny=[-1,-1,-1,0,0,1,1,1];
+    const nx = [-1,0,1,-1,1,-1,0,1]; const ny=[-1,-1,-1,0,0,1,1,1];
     let neighbors=0; for(let k=0;k<8;k++){ if(grid[idx(a.x+nx[k], a.y+ny[k])]!==-1) neighbors++; }
     if(neighbors>=CROWD_K && rand()<0.2){ kill(a); return; }
 
@@ -155,71 +146,58 @@
       case 4:{ const [dx,dy]=ahead(a); const empty=(grid[idx(a.x+dx,a.y+dy)]===-1); if(empty) a.ip=(a.ip+1)%a.gen.length; break; }
       case 5:{
         if(rand()<REPL_GATE && a.energy>40){
-          const [dx,dy]=ahead(a);
-          const spot=idx(a.x+dx,a.y+dy);
+          const [dx,dy]=ahead(a); const spot=idx(a.x+dx,a.y+dy);
           if(grid[spot]===-1){
             const child=spawn(a.x+dx,a.y+dy, mutate(a.gen, MUT_RATE));
-            if(child!==-1){
-              const give=Math.floor(a.energy*(1-REPL_COST));
-              agents[child].energy=give;
-              a.energy=Math.max(10,a.energy-give);
-            }
+            if(child!==-1){ const give = Math.floor(a.energy*(1-REPL_COST)); agents[child].energy = give; a.energy = Math.max(10, a.energy - give); }
           }
         } break;
       }
-      case 6: a.gen=mutate(a.gen, MUT_RATE*0.5); a.hue=colorFromGenome(a.gen); break;
-      case 7: a.ip=(a.ip+2+(a.gen[(a.ip+1)%a.gen.length]||1))%a.gen.length; break;
-      case 8: a.energy+=Math.floor(EAT_GAIN_MIN+(EAT_GAIN_MAX-EAT_GAIN_MIN)*ambient(a.x,a.y)); break;
+      case 6: a.gen = mutate(a.gen, MUT_RATE*0.5); a.hue=colorFromGenome(a.gen); break;
+      case 7: a.ip = (a.ip + 2 + (a.gen[(a.ip+1)%a.gen.length]||1)) % a.gen.length; break;
+      case 8: a.energy += Math.floor(EAT_GAIN_MIN + (EAT_GAIN_MAX-EAT_GAIN_MIN)*ambient(a.x,a.y)); break;
       case 9: break;
       case 10: kill(a); return;
+      default: /* NOP */
     }
-    a.ip=(a.ip+1)%a.gen.length;
+    a.ip = (a.ip + 1) % a.gen.length;
 
     if(a.age>1200 && rand()<0.003) kill(a);
   }
 
-  function kill(a){ const id=grid[idx(a.x,a.y)]; if(id!==-1) grid[idx(a.x,a.y)] = -1; a.dead=true; a.energy=-1; }
+  function kill(a){ const id = grid[idx(a.x,a.y)]; if(id!==-1) grid[idx(a.x,a.y)] = -1; a.dead=true; a.energy=-1; }
 
   function compact(){
     const newAgents=[]; grid.fill(-1);
-    for(let i=0;i<agents.length;i++){ const a=agents[i]; if(!a.dead){ grid[idx(a.x,a.y)]=newAgents.length; newAgents.push(a); } }
-    agents=newAgents;
+    for(let i=0;i<agents.length;i++){ const a=agents[i]; if(!a.dead){ grid[idx(a.x,a.y)] = newAgents.length; newAgents.push(a); } }
+    agents = newAgents;
   }
 
-  function seedBlob(cx,cy,count){ for(let i=0;i<count;i++){ const x=cx+rint(7)-3,y=cy+rint(7)-3; spawn(x,y,newGenome(14+rint(10))); } }
-  function randomSeeds(n=40){ for(let i=0;i<n;i++) seedBlob(rint(cols),rint(rows),1+rint(2)); }
+  function seedBlob(cx,cy,count){ for(let i=0;i<count;i++){ const x=cx+rint(7)-3, y=cy+rint(7)-3; spawn(x,y, newGenome(14+rint(10))); } }
+  function randomSeeds(n=40){ for(let i=0;i<n;i++) seedBlob(rint(cols), rint(rows), 1+rint(2)); }
 
-  // --- 렌더 ---
-  let trailTick=0, TRAILS=true;
+  // --- 렌더: BW 픽셀 전용 ---
+  let trailTick=0;           // 잔상 페이드 제어
+  const TRAILS = true;       // false로 바꾸면 딱딱 끊기는 픽셀 렌더
   function draw(){
     if(TRAILS){
       if((trailTick++%2)===0){
-        ctx.globalCompositeOperation='source-over';
-        ctx.fillStyle='rgba(0,0,0,0.35)';
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle='rgba(0,0,0,0.35)'; // 검정 페이드
         ctx.fillRect(0,0,cvs.width,cvs.height);
       }
-    } else ctx.clearRect(0,0,cvs.width,cvs.height);
-
-    // ripples
-    for(let i=ripples.length-1;i>=0;i--){
-      const p=ripples[i];
-      ctx.strokeStyle=`rgba(255,255,255,${p.alpha})`;
-      ctx.lineWidth=Math.max(1,tile*0.15);
-      ctx.beginPath();
-      ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
-      ctx.stroke();
-      p.r+=p.dr*0.12; p.alpha*=0.88;
-      if(p.alpha<0.05) ripples.splice(i,1);
+    } else {
+      ctx.clearRect(0,0,cvs.width,cvs.height);
     }
 
-    // agents
     for(let i=0;i<agents.length;i++){
       const a=agents[i]; if(a.dead) continue;
-      const x=a.x*tile,y=a.y*tile;
-      const l=0.3+Math.min(1,a.energy/60)*0.65;
-      const L=Math.round(l*100);
-      ctx.fillStyle=`hsl(0,0%,${L}%)`;
-      ctx.fillRect(x,y,tile,tile);
+      const x=a.x*tile, y=a.y*tile;
+      // 에너지 기반 밝기 (0~1) -> 30~95% 흰색
+      const l = 0.3 + Math.min(1, a.energy/60)*0.65;
+      const L = Math.round(l*100);
+      ctx.fillStyle = `hsl(0,0%,${L}%)`;
+      ctx.fillRect(x, y, tile, tile);
     }
   }
 
@@ -227,9 +205,9 @@
   let SPEED=1.0, frame=0;
   function loop(){
     requestAnimationFrame(loop);
-    const iters=Math.max(1,Math.floor(SPEED));
+    const iters = Math.max(1, Math.floor(SPEED));
     for(let r=0;r<iters;r++){
-      const len=agents.length, stepCount=Math.min(len,Math.ceil(len*0.6));
+      const len=agents.length; const stepCount = Math.min(len, Math.ceil(len*0.6));
       for(let k=0;k<stepCount;k++){ const i=(k*2+frame)%len; step(agents[i]); }
       if((frame%30)===0) compact();
     }
@@ -237,61 +215,53 @@
   }
 
   // --- Extinction control ---
-  const lerp=(a,b,t)=>a+(b-a)*t;
+  const lerp = (a,b,t)=> a + (b-a)*t;
   function applyExtinction(t){
-    BASE_DRAIN=Math.round(lerp(1,4,t));
-    EAT_GAIN_MIN=Math.round(lerp(6,1,t));
-    EAT_GAIN_MAX=Math.round(lerp(12,6,t));
-    REPL_COST=lerp(0.3,0.75,t);
-    REPL_GATE=lerp(0.8,0.35,t);
-    CROWD_K=Math.round(lerp(7,4,t));
-    MAX_DENSITY=lerp(0.25,0.08,t);
+    BASE_DRAIN   = Math.round(lerp(1, 4, t));
+    EAT_GAIN_MIN = Math.round(lerp(6, 1, t));
+    EAT_GAIN_MAX = Math.round(lerp(12, 6, t));
+    REPL_COST    = lerp(0.3, 0.75, t);
+    REPL_GATE    = lerp(0.8, 0.35, t);
+    CROWD_K      = Math.round(lerp(7, 4, t));
+    MAX_DENSITY  = lerp(0.25, 0.08, t);
   }
 
   // --- UI hooks ---
-  const speedEl=document.getElementById('speed'), speedLabel=document.getElementById('speedLabel');
-  speedEl.oninput=()=>{ SPEED=+speedEl.value; speedLabel.textContent=SPEED+'x'; };
+  const speedEl = document.getElementById('speed'); const speedLabel=document.getElementById('speedLabel');
+  speedEl.oninput = ()=>{ SPEED=+speedEl.value; speedLabel.textContent=SPEED+'x'; };
 
-  const mutEl=document.getElementById('mut'), mutLabel=document.getElementById('mutLabel');
-  mutEl.oninput=()=>{ MUT_RATE=+mutEl.value; mutLabel.textContent=Math.round(MUT_RATE*100)+'%'; };
+  const mutEl = document.getElementById('mut'); const mutLabel=document.getElementById('mutLabel');
+  mutEl.oninput = ()=>{ MUT_RATE=+mutEl.value; mutLabel.textContent=Math.round(MUT_RATE*100)+'%'; };
 
-  const seedEl=document.getElementById('seedCount'), seedLabel=document.getElementById('seedLabel');
-  seedEl.oninput=()=>{ seedLabel.textContent=seedEl.value; };
+  const seedEl = document.getElementById('seedCount'); const seedLabel=document.getElementById('seedLabel');
+  seedEl.oninput = ()=>{ seedLabel.textContent = seedEl.value; };
 
-  const pxEl=document.getElementById('px'), pxLabel=document.getElementById('pxLabel');
-  pxEl.oninput=()=>{ tile=+pxEl.value; pxLabel.textContent=tile; buildGrid(false); randomSeeds(+seedEl.value); };
+  const pxEl = document.getElementById('px'); const pxLabel=document.getElementById('pxLabel');
+  pxEl.oninput = ()=>{ tile = +pxEl.value; pxLabel.textContent=tile; buildGrid(false); randomSeeds(+seedEl.value); };
 
-  const extEl=document.getElementById('ext'), extLabel=document.getElementById('extLabel');
-  extEl.oninput=()=>{ const t=+extEl.value; extLabel.textContent=t.toFixed(2); applyExtinction(t); buildGrid(false); randomSeeds(+seedEl.value); };
+  const extEl = document.getElementById('ext'); const extLabel=document.getElementById('extLabel');
+  extEl.oninput = ()=>{ const t=+extEl.value; extLabel.textContent=t.toFixed(2); applyExtinction(t); buildGrid(false); randomSeeds(+seedEl.value); };
 
-  document.getElementById('resetBtn').onclick=()=>{ buildGrid(false); randomSeeds(+seedEl.value); };
-  document.getElementById('intrudeBtn').onclick=()=>{
-    const cx=rint(cols),cy=rint(rows);
+  document.getElementById('resetBtn').onclick = ()=>{ buildGrid(false); randomSeeds(+seedEl.value); };
+  document.getElementById('intrudeBtn').onclick = ()=>{
+    const cx=rint(cols), cy=rint(rows);
     const alien=new Uint8Array([8,5,1,1,8,5,7,1,5,8,1,6,5,1,1,8]);
-    for(let i=0;i<20;i++) spawn(cx+rint(9)-4,cy+rint(9)-4,mutate(alien,0.02));
+    for(let i=0;i<20;i++) spawn(cx+rint(9)-4, cy+rint(9)-4, mutate(alien, 0.02));
   };
 
-  // --- Click feedback (no toast) ---
-  cvs.addEventListener('click',(e)=>{
-    const rect=cvs.getBoundingClientRect();
-    const gx=Math.floor((e.clientX-rect.left)/tile);
-    const gy=Math.floor((e.clientY-rect.top)/tile);
-    const count=+seedEl.value||8;
-    seedBlob(gx,gy,count);
-
-    const cx=gx*tile+tile*0.5, cy=gy*tile+tile*0.5;
-    ripples.push({x:cx,y:cy,r:tile*0.5,alpha:0.9,dr:Math.max(6,tile*0.9)});
-    if(navigator.vibrate) navigator.vibrate(20);
+  cvs.addEventListener('click', (e)=>{
+    const rect=cvs.getBoundingClientRect(); const x=Math.floor((e.clientX-rect.left)/tile); const y=Math.floor((e.clientY-rect.top)/tile);
+    seedBlob(x,y, 8);
   });
 
-  // --- Key: U = UI toggle ---
-  addEventListener('keydown',(e)=>{
+  // 키보드: U = UI 토글
+  addEventListener('keydown', (e)=>{
     if(e.key.toLowerCase()==='u'){ document.body.classList.toggle('hide-ui'); buildGrid(true); }
   });
 
   // init
-  applyExtinction(+extEl.value);
-  buildGrid(false); randomSeeds(+seedEl.value); loop();
+  applyExtinction(+document.getElementById('ext').value);
+  buildGrid(false); randomSeeds(+document.getElementById('seedCount').value); loop();
 })();
 </script>
 </body>

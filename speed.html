@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
+<title>도시의 속도 vs 몸의 속도 — 공명 테스트</title>
+<style>
+  :root{ --bg:#0b0e12; --ink:#f5f7ff; --rule:#1c2534; }
+  html, body {
+    height:100%; margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.6 system-ui, -apple-system, "Noto Sans KR", Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    overflow:hidden; touch-action:none;
+  }
+  #wrap{ display:grid; grid-template-rows:auto 1fr; height:100vh; }
+  body.hide-ui header{ display:none; }
+  header{
+    display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+    padding:10px 12px; border-bottom:1px solid var(--rule);
+  }
+  header h1{ margin:0; font-size:14px; opacity:.9 }
+  .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap }
+  .btn, input[type=range]{
+    accent-color:#7cc7ff;
+  }
+  .btn{
+    padding:6px 10px; border:1px solid var(--rule); border-radius:10px;
+    background:transparent; color:inherit; cursor:pointer;
+  }
+  #canvas{ width:100%; height:100%; display:block; background:#000; }
+  .hint{ position:fixed; right:12px; bottom:10px; font-size:12px; opacity:.6 }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <h1>도시의 속도 vs 몸의 속도 — Resonance</h1>
+    <div class="row">
+      <label>몸의 속도 <span id="bpmLabel">90 BPM</span></label>
+      <input id="bpm" type="range" min="40" max="180" step="1" value="90"/>
+      <span style="opacity:.7">도시 속도는 시간/환경에 따라 자동으로 변합니다</span>
+    </div>
+    <button class="btn" id="reset">Reset</button>
+  </header>
+  <canvas id="canvas"></canvas>
+</div>
+<div class="hint">←/→ 또는 휠: 몸의 속도 조절 · U: UI 표시/숨김</div>
+
+<script>
+(function(){
+  // --- UI & Canvas ---
+  const cvs = document.getElementById('canvas');
+  const ctx = cvs.getContext('2d');
+  const bpmEl = document.getElementById('bpm');
+  const bpmLabel = document.getElementById('bpmLabel');
+
+  function resize(){
+    const dpr = Math.min(devicePixelRatio||1, 2);
+    cvs.width = Math.floor(innerWidth * dpr);
+    cvs.height = Math.floor((innerHeight - (document.querySelector('header')?.offsetHeight||0)) * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  addEventListener('resize', resize);
+
+  // --- Noise (city tempo drift) ---
+  let seed = (Math.random()*1e9)|0;
+  function rng(){ seed ^= seed<<13; seed ^= seed>>>17; seed ^= seed<<5; return (seed>>>0)/4294967296; }
+  function noise1d(t){ // value noise
+    const i = Math.floor(t), f = t - i;
+    const a = (Math.sin(i*12.9898)*43758.5453)%1;  // pseudo-hash
+    const b = (Math.sin((i+1)*12.9898)*43758.5453)%1;
+    const fa = a - Math.floor(a), fb = b - Math.floor(b);
+    const u = f*f*(3-2*f);
+    return fa*(1-u) + fb*u;
+  }
+
+  // --- State ---
+  let bodyBPM = +bpmEl.value; // controlled
+  let cityBPM = 100;          // auto (drifting)
+  let t0 = performance.now()/1000;
+
+  bpmEl.oninput = ()=>{ bodyBPM = +bpmEl.value; bpmLabel.textContent = bodyBPM + " BPM"; };
+
+  document.getElementById('reset').onclick = ()=>{
+    bodyBPM = 90; bpmEl.value = 90; bpmLabel.textContent = "90 BPM";
+  };
+
+  addEventListener('keydown', (e)=>{
+    const k = e.key.toLowerCase();
+    if(k==='u'){ document.body.classList.toggle('hide-ui'); resize(); return; }
+    if(k==='arrowleft'){ bodyBPM = Math.max(40, bodyBPM-1); bpmEl.value = bodyBPM; bpmLabel.textContent = bodyBPM+" BPM"; }
+    if(k==='arrowright'){ bodyBPM = Math.min(180, bodyBPM+1); bpmEl.value = bodyBPM; bpmLabel.textContent = bodyBPM+" BPM"; }
+  });
+
+  // 휠로 조절 (모바일에선 무시)
+  addEventListener('wheel', (e)=>{
+    e.preventDefault();
+    const delta = Math.sign(e.deltaY);
+    bodyBPM = Math.min(180, Math.max(40, bodyBPM - delta));
+    bpmEl.value = bodyBPM; bpmLabel.textContent = bodyBPM + " BPM";
+  }, { passive:false });
+
+  // --- Helper ---
+  function map(n,a,b,c,d){ return (n-a)*(d-c)/(b-a)+c; }
+  function clamp(n,a,b){ return Math.max(a, Math.min(b, n)); }
+
+  // --- Draw ---
+  function draw(){
+    const W = cvs.width / (devicePixelRatio||1);
+    const H = cvs.height / (devicePixelRatio||1);
+    ctx.clearRect(0,0,W,H);
+
+    // 시간 경과
+    const t = performance.now()/1000 - t0;
+
+    // 도시 BPM: 60~160 사이에서 느리게 부유 (일상/러시아워/야간 비유)
+    const slow = t*0.05;
+    cityBPM = map(noise1d(slow)*noise1d(slow*0.7), 0,1, 60,160);
+
+    // 파형 설정
+    const mid = H*0.5;
+    const A1 = clamp(map(Math.abs(cityBPM-bodyBPM),0,40, 80,30), 30, 80); // 차이가 작을수록 진폭↑
+    const A2 = A1*0.75;
+    const len = W;
+
+    // 격자/스케일
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for(let x=0; x<W; x+=40){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for(let y=mid-120; y<=mid+120; y+=40){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+    // 도시 파형 (위)
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    for(let x=0;x<=len;x++){
+      const ph = x/W * Math.PI*4;
+      const y = mid - 60 + Math.sin(ph * cityBPM/60 + t*cityBPM/30) * A1 * 0.5;
+      if(x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+
+    // 몸 파형 (아래)
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    for(let x=0;x<=len;x++){
+      const ph = x/W * Math.PI*4;
+      const y = mid + 60 + Math.sin(ph * bodyBPM/60 + t*bodyBPM/30) * A2 * 0.5;
+      if(x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+
+    // 공명(차이) 시각화: 중앙 링 + 글자
+    const diff = Math.abs(cityBPM - bodyBPM);
+    const coherence = clamp(1 - diff/40, 0, 1); // 0~1
+    const r = map(coherence, 0,1, 18, 60);
+
+    // 링
+    ctx.beginPath();
+    ctx.strokeStyle = `rgba(255,255,255,${0.2 + 0.6*coherence})`;
+    ctx.lineWidth = 2 + 6*coherence;
+    ctx.arc(W*0.5, mid, r, 0, Math.PI*2);
+    ctx.stroke();
+
+    // 텍스트
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = '600 18px system-ui, -apple-system, "Noto Sans KR", sans-serif';
+    const msg = (diff < 6) ? '맞아요' : '아직 안 맞아요';
+    ctx.fillStyle = `rgba(255,255,255,${0.6 + 0.4*coherence})`;
+    ctx.fillText(msg, W*0.5, mid);
+
+    // 보조 정보
+    ctx.font = '12px system-ui, -apple-system, "Noto Sans KR", sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText(`city ${cityBPM.toFixed(0)} BPM`, 70, mid-80);
+    ctx.fillText(`body ${bodyBPM.toFixed(0)} BPM`, 70, mid+80);
+
+    requestAnimationFrame(draw);
+  }
+
+  // init
+  resize(); draw();
+})();
+</script>
+</body>
+</html>

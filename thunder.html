@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>Vertical Lightning</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  html,body{height:100%}
+  body{margin:0;background:#000;overflow:hidden;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
+  canvas{display:block;width:100vw;height:100vh}
+  .ui{
+    position:fixed;left:12px;bottom:12px;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;
+    background:rgba(0,0,0,.5);padding:.5rem .6rem;border:1px solid rgba(255,255,255,.15);border-radius:12px;
+    color:#cfd8ff;backdrop-filter:blur(8px)
+  }
+  .ui label{font-size:12px;opacity:.9;display:flex;gap:.4rem;align-items:center}
+  .ui input{vertical-align:middle}
+  .ui button{
+    background:#111;border:1px solid #334; color:#cfe; padding:.35rem .6rem; border-radius:10px; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="ui">
+  <label>속도 <input id="speed" type="range" min="0.2" max="5" step="0.1" value="1.6"></label>
+  <label>진폭 <input id="amp" type="range" min="2" max="80" step="1" value="28"></label>
+  <label>거칠기 <input id="rough" type="range" min="1" max="14" step="0.5" value="7"></label>
+  <label>길이 <input id="len" type="range" min="0.3" max="1.2" step="0.05" value="1.0"></label>
+  <label>굵기 <input id="thick" type="range" min="1" max="6" step="0.5" value="2.5"></label>
+  <button id="zap">⚡ 번개</button>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  // ====== 파라미터 ======
+  let SPEED = 1.6;      // 진행 속도
+  let AMP = 28;         // 좌우 흔들림 진폭(세로 모드에서 x 진폭)
+  let ROUGH = 7;        // 고주파 거칠기
+  let LEN_FACTOR = 1.0; // 번개 세그먼트 길이 스케일(화면 높이에 곱)
+  let THICK = 2.5;      // 기본 굵기
+  const GLOW = 26;      // 글로우
+  const BRANCH_CHANCE = 0.16;
+  const FLASH_DECAY = 0.90;
+
+  // UI 연결
+  const speedEl = document.getElementById('speed');
+  const ampEl = document.getElementById('amp');
+  const roughEl = document.getElementById('rough');
+  const lenEl = document.getElementById('len');
+  const thickEl = document.getElementById('thick');
+  document.getElementById('zap').onclick = () => triggerFlash(1.0, true);
+
+  speedEl.oninput = () => SPEED = parseFloat(speedEl.value);
+  ampEl.oninput = () => AMP = parseFloat(ampEl.value);
+  roughEl.oninput = () => ROUGH = parseFloat(roughEl.value);
+  lenEl.oninput = () => LEN_FACTOR = parseFloat(lenEl.value);
+  thickEl.oninput = () => THICK = parseFloat(thickEl.value);
+
+  // 리사이즈
+  function fit() {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    canvas.width  = Math.floor(innerWidth  * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+  addEventListener('resize', fit, {passive:true});
+  fit();
+
+  // 스무드 노이즈
+  function hash(n){const s=Math.sin(n)*43758.5453;return s-Math.floor(s)}
+  function smoothNoise(x, scale=1){
+    const xi=Math.floor(x), xf=x-xi;
+    const r1=hash(xi*9301+49297)*2-1, r2=hash((xi+1)*9301+49297)*2-1;
+    const u=xf*xf*(3-2*xf);
+    return (r1*(1-u)+r2*u)*scale;
+  }
+  const rand=(seed=>()=> (seed=(seed*16807)%2147483647)/2147483647)(Date.now()%2147483647);
+
+  // 상태
+  let t = 0;
+  // 세로 모드이므로 기준 x를 가운데로 두고, y가 내려감
+  let baseX = () => innerWidth * 0.5;
+  let y = -20;          // 화면 위에서 시작해 아래로 이동
+  let xPrev = baseX();
+  let flash = 0;
+  let shock = 0;
+  let branches = [];
+
+  function triggerFlash(strength=0.8, withShock=false){
+    flash = Math.max(flash, Math.min(1, strength));
+    if(withShock) shock = Math.max(shock, 1.0);
+  }
+
+  function addBranch(x0, y0, dir=1){
+    const len = 18 + rand()*60;
+    const ang = (rand()*0.9 + 0.2) * dir; // 좌우로 크게 퍼지도록
+    const life = 10 + Math.floor(rand()*16);
+    branches.push({x:x0,y:y0,dx:Math.sin(ang),dy:Math.cos(ang),len,life});
+  }
+
+  function step(){
+    const w = innerWidth, h = innerHeight;
+    t += 0.016 * SPEED;
+
+    // 길이(세로 진행량): 화면 높이에 비례
+    const segLen = (h * 0.012) * SPEED * LEN_FACTOR; // 기본 세그먼트 길이
+    const slow = smoothNoise(t * 1.2, AMP);
+    const fast = smoothNoise(t * ROUGH, AMP * 0.35);
+    const jitterX = (slow + fast) + (shock * (AMP * 0.9) * (rand()*2 - 1));
+    const x = baseX() + jitterX;
+    const yNext = y + segLen;
+
+    // 페이드(잔광)
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(0,0,0,${(1-FLASH_DECAY) + (1-FLASH_DECAY)*flash*0.2})`;
+    ctx.fillRect(0,0,w,h);
+
+    // 메인 번개 라인
+    ctx.lineWidth = THICK + flash * 1.2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = `rgba(220,235,255,${0.92})`;
+    ctx.shadowColor = `rgba(120,180,255,0.9)`;
+    ctx.shadowBlur = GLOW * (1 + flash*1.2);
+
+    ctx.beginPath();
+    ctx.moveTo(xPrev, y);
+    ctx.lineTo(x, yNext);
+    ctx.stroke();
+
+    // 가지 만들기
+    if (rand() < BRANCH_CHANCE + flash*0.25) {
+      addBranch(x, yNext, rand()<0.5 ? -1 : 1);
+    }
+
+    // 가지 업데이트
+    ctx.lineWidth = Math.max(1, THICK*0.7 + flash*0.6);
+    for(let i=branches.length-1;i>=0;i--){
+      const b=branches[i];
+      const nx = b.x + b.dx * 9;
+      const ny = b.y + b.dy * 9 + (rand()*5 - 2.5);
+      const progress = (b.len - b.life) / b.len;
+      const fade = Math.max(0.12, 1 - progress);
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(nx, ny);
+      ctx.strokeStyle = `rgba(200,220,255,${0.65*fade})`;
+      ctx.shadowBlur = GLOW * 0.7;
+      ctx.stroke();
+      b.x = nx; b.y = ny; b.life--;
+      if(b.life<=0) branches.splice(i,1);
+    }
+
+    // 아래쪽 끝 도달 시 위에서 재시작 + 번쩍
+    if (yNext > h + 20) {
+      y = -40;
+      xPrev = baseX();
+      if (rand() < 0.7) triggerFlash(0.9, true);
+    } else {
+      y = yNext;
+      xPrev = x;
+    }
+
+    // 감쇠
+    flash *= 0.9;
+    shock *= 0.85;
+
+    requestAnimationFrame(step);
+  }
+
+  // 주기적 작은 플래시
+  setInterval(()=>{ if(rand()<0.45) triggerFlash(0.5,false); }, 600 + rand()*800);
+
+  step();
+})();
+</script>
+</body>
+</html>
